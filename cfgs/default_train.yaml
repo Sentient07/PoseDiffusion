@@ -4,7 +4,7 @@ exp_dir: "name_your_own"
 
 train:
     # Please Specify Your Own Path
-    CO3D_DIR: "/datasets01/co3dv2/080422/"
+    CO3D_DIR: "/fsx-repligen/shared/datasets/co3d/"
     CO3D_ANNOTATION_DIR: "/fsx-repligen/jianyuan/datasets/co3d_relpose/"
     
 
@@ -38,7 +38,7 @@ train:
     compute_optical: True
     color_aug: True
     erase_aug: False
-    batch_repeat: 90
+    batch_repeat: 0
 
 debug: False
 
