@@ -28,7 +28,7 @@ from util.train_util import (
     set_seed_and_print,
     view_color_coded_images_for_visdom,
 )
-
+from models.camera_predictor import CameraPredictor
 
 @hydra.main(config_path="../cfgs/", config_name="default_train")
 def train_fn(cfg: DictConfig):
@@ -66,7 +66,8 @@ def train_fn(cfg: DictConfig):
     accelerator.print("length of eval dataloader is: ", len(eval_dataloader))
 
     # Model instantiation
-    model = instantiate(cfg.MODEL, _recursive_=False)
+    # model = instantiate(cfg.MODEL, _recursive_=False)
+    model = CameraPredictor()
     model = model.to(accelerator.device)
 
     # Optimizer and Scheduler
@@ -191,7 +192,7 @@ def _train_or_eval_fn(
 
         if training:
             predictions = model(images, gt_cameras=gt_cameras, training=True, batch_repeat=cfg.train.batch_repeat)
-            predictions["loss"] = predictions["loss"].mean()
+            # predictions["loss"] = predictions["loss"].mean()
             loss = predictions["loss"]
         else:
             with torch.no_grad():
