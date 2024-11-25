@@ -386,9 +386,10 @@ class CameraPredictor(nn.Module):
         rel_pose_from_pred = closed_form_inverse(pred_se3_flat[pair_idx_i1]).bmm(pred_se3_flat[pair_idx_i2])
         rel_pose_from_gt = closed_form_inverse(gt_se3_flat[pair_idx_i1]).bmm(gt_se3_flat[pair_idx_i2])
 
-        r_loss = so3_relative_angle(rel_pose_from_pred[:, :3, :3], rel_pose_from_gt[:, :3, :3])
+        R12 = torch.bmm(rel_pose_from_pred[:, :3, :3], rel_pose_from_gt[:, :3, :3].permute(0, 2, 1))
+        r_loss =  (R12 - torch.eye(3).to(R12.device).unsqueeze(0).clone()) ** 2
+        # r_loss = so3_relative_angle(rel_pose_from_pred[:, :3, :3], rel_pose_from_gt[:, :3, :3])
         t_loss = (rel_pose_from_pred[:, 3, :3] - rel_pose_from_gt[:, 3, :3]) ** 2
-
 
         pred_cameras = gt_cameras.clone()
         pred_cameras.R = pred_R

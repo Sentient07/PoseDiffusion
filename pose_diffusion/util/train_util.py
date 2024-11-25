@@ -97,7 +97,7 @@ def get_co3d_dataset(cfg):
     common_params = {
         "category": (cfg.train.category,),
         "debug": False,
-        "mask_images": False,
+        "mask_images": True,
         "img_size": cfg.train.img_size,
         "normalize_cameras": cfg.train.normalize_cameras,
         "min_num_images": cfg.train.min_num_images,
@@ -126,7 +126,7 @@ def get_co3d_dataset_test(cfg, category = None):
     common_params = {
         "category": (category,),
         "debug": False,
-        "mask_images": False,
+        "mask_images": True,
         "img_size": cfg.test.img_size,
         "normalize_cameras": cfg.test.normalize_cameras,
         "min_num_images": cfg.test.min_num_images,

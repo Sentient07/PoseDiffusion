@@ -29,6 +29,8 @@ import models
 from hydra.utils import instantiate
 from pytorch3d.renderer.cameras import PerspectiveCameras
 
+from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +121,22 @@ class PoseDiffusionModel(nn.Module):
 
             diffusion_results = self.diffuser(pose_encoding, z=z)
 
+            # Begin Ramana edit
+            pair_idx_i1, pair_idx_i2 = batched_all_pairs(batch_num, frame_num, z.device)
+            pred_pose_enc = diffusion_results['x_0_pred'].reshape(batch_num*frame_num, -1)[:, :7]
+            gt_se3_flat = gt_cameras.get_world_to_view_transform().get_matrix()
+            pred_R, pred_t, pred_se3_flat = pose_encoding_to_R_t(pred_pose_enc)
+            rel_pose_from_pred = closed_form_inverse(pred_se3_flat[pair_idx_i1]).bmm(pred_se3_flat[pair_idx_i2])
+            rel_pose_from_gt = closed_form_inverse(gt_se3_flat[pair_idx_i1]).bmm(gt_se3_flat[pair_idx_i2])
+
+            R12 = torch.bmm(rel_pose_from_pred[:, :3, :3], rel_pose_from_gt[:, :3, :3].permute(0, 2, 1))
+            r_loss =  (R12 - torch.eye(3).to(R12.device).unsqueeze(0).clone()) ** 2
+            t_loss = (rel_pose_from_pred[:, 3, :3] - rel_pose_from_gt[:, 3, :3]) ** 2
+            loss = r_loss.mean() + t_loss.mean()
+            diffusion_results["loss"] = 0.1*loss
+            # End Ramana Edit
+            # import pdb;pdb.set_trace()
+
             diffusion_results["pred_cameras"] = pose_encoding_to_camera(
                 diffusion_results["x_0_pred"], pose_encoding_type=self.pose_encoding_type
             )
@@ -140,3 +158,38 @@ class PoseDiffusionModel(nn.Module):
             diffusion_results = {"pred_cameras": pred_cameras, "z": z}
 
             return diffusion_results
+
+
+def closed_form_inverse(se3):
+    # se3:    Nx4x4
+    # return: Nx4x4
+    # inverse each 4x4 matrix
+    R = se3[:,:3,:3]
+    T = se3[:, 3:, :3]
+    R_trans = R.transpose(1,2)
+
+    left_down = - T.bmm(R_trans)
+    left = torch.cat((R_trans,left_down),dim=1)
+    right = se3[:,:,3:].detach().clone()
+    inversed = torch.cat((left,right),dim=-1)
+    return inversed
+
+def pose_encoding_to_R_t(pose_encoding):
+    transform = torch.zeros(pose_encoding.shape[0], 4, 4, dtype=pose_encoding.dtype, device=pose_encoding.device)
+    abs_T = pose_encoding[:, :3]
+    quaternion_R = quaternion_to_matrix(pose_encoding[:, 3:7])
+    transform[:, :3, :3] = quaternion_R
+    transform[:, 3, :3] = abs_T
+    transform[:, 3, 3] = 1.0
+    return quaternion_R, abs_T, transform
+
+def batched_all_pairs(B, N, device):
+    # se3 in B x N x 4 x 4
+    i1_, i2_ = torch.combinations(
+        torch.arange(N), 2, with_replacement=False
+    ).to(device).unbind(-1)
+    i1, i2 = [
+        (i[None] + torch.arange(B, device=device)[:, None] * N).reshape(-1)
+        for i in [i1_, i2_]
+    ]
+    return i1, i2

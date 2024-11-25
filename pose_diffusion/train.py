@@ -30,7 +30,7 @@ from util.train_util import (
 )
 from models.camera_predictor import CameraPredictor
 
-@hydra.main(config_path="../cfgs/", config_name="default_train")
+@hydra.main(config_path="../cfgs/", config_name="default_train_2")
 def train_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
     accelerator = Accelerator(even_batches=False, device_placement=False)
@@ -66,6 +66,9 @@ def train_fn(cfg: DictConfig):
     accelerator.print("length of eval dataloader is: ", len(eval_dataloader))
 
     # Model instantiation
+    ## HACK, FIXME: 
+    # 1) UnComment `instantiate` and comment CameraPredictor() for Pose Diffusion with relative loss
+    # 2) Vice-versa of (1) for VGGSFM's network
     # model = instantiate(cfg.MODEL, _recursive_=False)
     model = CameraPredictor()
     model = model.to(accelerator.device)
@@ -81,7 +84,7 @@ def train_fn(cfg: DictConfig):
     # Accelerator setup
     model, dataloader, optimizer, lr_scheduler = accelerator.prepare(model, dataloader, optimizer, lr_scheduler)
 
-    start_epoch = 0
+    start_epoch = 1
     if cfg.train.resume_ckpt:
         checkpoint = torch.load(cfg.train.resume_ckpt)
         try:
@@ -165,6 +168,7 @@ def _train_or_eval_fn(
     for step, batch in enumerate(dataloader):
         # data preparation
         images = batch["image"].to(accelerator.device)
+        # plt.imsave('temp1.png', images[0,0].permute(1,2,0).cpu().clamp(0.,1.).numpy())
         translation = batch["T"].to(accelerator.device)
         rotation = batch["R"].to(accelerator.device)
         fl = batch["fl"].to(accelerator.device)
@@ -196,7 +200,7 @@ def _train_or_eval_fn(
             loss = predictions["loss"]
         else:
             with torch.no_grad():
-                predictions = model(images, training=False)
+                predictions = model(images, gt_cameras=gt_cameras, training=False)
 
         pred_cameras = predictions["pred_cameras"]
 
