@@ -145,6 +145,57 @@ def pose_encoding_to_R_t(pose_encoding):
     transform[:, 3, 3] = 1.0
     return quaternion_R, abs_T, transform
 
+
+
+def camera_to_pose_encoding(
+    camera,
+    pose_encoding_type="absT_quaR_OneFL",
+    log_focal_length_bias=1.8,
+    min_focal_length=0.1,
+    max_focal_length=30,
+):
+    """
+    Inverse to pose_encoding_to_camera
+    """
+    if pose_encoding_type == "absT_quaR_logFL":
+        # Convert rotation matrix to quaternion
+        quaternion_R = matrix_to_quaternion(camera.R)
+
+        # Calculate log_focal_length
+        log_focal_length = (
+            torch.log(
+                torch.clamp(
+                    camera.focal_length,
+                    min=min_focal_length,
+                    max=max_focal_length,
+                )
+            )
+            - log_focal_length_bias
+        )
+
+        # Concatenate to form pose_encoding
+        pose_encoding = torch.cat(
+            [camera.T, quaternion_R, log_focal_length], dim=-1
+        )
+
+    elif pose_encoding_type == "absT_quaR_OneFL":
+        # [absolute translation, quaternion rotation, normalized focal length]
+        quaternion_R = matrix_to_quaternion(camera.R)
+        focal_length = (
+            torch.clamp(
+                camera.focal_length, min=min_focal_length, max=max_focal_length
+            )
+        )[..., 0:1]
+        pose_encoding = torch.cat(
+            [camera.T, quaternion_R, focal_length], dim=-1
+        )
+    else:
+        raise ValueError(f"Unknown pose encoding {pose_encoding_type}")
+
+    return pose_encoding
+
+
+
 def pose_encoding_to_camera(
     pose_encoding,
     pose_encoding_type="absT_quaR_logFL",
@@ -152,7 +203,7 @@ def pose_encoding_to_camera(
     min_focal_length=0.1,
     max_focal_length=30,
     return_dict=False,
-    to_OpenCV=True,
+    to_OpenCV=False,
 ):
     """
     Args:
@@ -206,7 +257,7 @@ def pose_encoding_to_camera(
         extrinsics_4x4[:, :3, :3] = R.clone()
         extrinsics_4x4[:, :3, 3] = abs_T.clone()
 
-        # rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
+        rel_transform = closed_form_inverse_OpenCV(extrinsics_4x4[0:1])
         rel_transform = rel_transform.expand(len(extrinsics_4x4), -1, -1)
 
         # relative to the first camera
@@ -352,6 +403,10 @@ class CameraPredictor(nn.Module):
 
         rgb_feat_init = rgb_feat.clone()
 
+        pose_predictions = []
+
+
+
         for iter_num in range(iters):
             pred_pose_enc = pred_pose_enc.detach()
 
@@ -374,35 +429,24 @@ class CameraPredictor(nn.Module):
             # Residual connection
             rgb_feat = (rgb_feat + rgb_feat_init) / 2
         
+            pose_predictions.append(pred_pose_enc)
+
         
-        device = pred_pose_enc.device
-        B_, N_ = pred_pose_enc.shape[0], pred_pose_enc.shape[1]
-        pred_pose_enc = pred_pose_enc.reshape(B_*N_, -1)
-        pred_R, pred_t, pred_se3_flat = pose_encoding_to_R_t(pred_pose_enc)
-        gt_se3_flat = gt_cameras.get_world_to_view_transform().get_matrix()
-        
-        pair_idx_i1, pair_idx_i2 = batched_all_pairs(B_, N_, device)
+        gt_pose_enc = camera_to_pose_encoding(gt_cameras, self.pose_encoding_type)
+        gt_pose_enc = gt_pose_enc.reshape(batch_num, frame_num, -1)
 
-        rel_pose_from_pred = closed_form_inverse(pred_se3_flat[pair_idx_i1]).bmm(pred_se3_flat[pair_idx_i2])
-        rel_pose_from_gt = closed_form_inverse(gt_se3_flat[pair_idx_i1]).bmm(gt_se3_flat[pair_idx_i2])
+        seq_loss = sequence_loss_Pose(pose_predictions, gt_pose_enc, gamma=0.6)
+        pred_cameras = pose_encoding_to_camera(pred_pose_enc.detach(), self.pose_encoding_type)
 
-        r_loss = so3_relative_angle(rel_pose_from_pred[:, :3, :3], rel_pose_from_gt[:, :3, :3])
-        t_loss = (rel_pose_from_pred[:, 3, :3] - rel_pose_from_gt[:, 3, :3]) ** 2
-
-
-        pred_cameras = gt_cameras.clone()
-        pred_cameras.R = pred_R
-        pred_cameras.t = pred_t
-
-        loss = r_loss.mean() + t_loss.mean()
         pose_predictions = {
             "pred_pose_enc": pred_pose_enc,
             "pred_cameras": pred_cameras,
-            "loss": loss,
+            "loss": seq_loss,
             "rgb_feat_init": rgb_feat_init,
         }
 
         return pose_predictions
+
 
     def get_backbone(self, backbone):
         """
@@ -500,3 +544,46 @@ def batched_all_pairs(B, N, device):
         for i in [i1_, i2_]
     ]
     return i1, i2
+
+
+
+def sequence_loss_Pose(pose_preds, pose_gt, gt_track=None, gamma=0.8, cfg = None):
+    """Loss function defined over sequence of pose predictions"""
+    B, S, D = pose_gt.shape
+    n_predictions = len(pose_preds)
+    pose_loss = 0.0
+
+    # if cfg.se3loss:
+    #     pair1, pair2 = batched_all_pairs(B,S)
+    #     gt_cameras = pose_encoding_to_camera(pose_gt.clone(), cfg.MODEL.pose_encoding_type)
+    #     gt_se3 = gt_cameras.get_world_to_view_transform().get_matrix()    
+    #     rel_gt = closed_form_inverse(gt_se3[pair1]).bmm(gt_se3[pair2])
+
+
+    for i in range(n_predictions):
+        i_weight = gamma ** (n_predictions - i - 1)
+        pose_pred = pose_preds[i]  # [:,:,0:1]
+        i_loss = (pose_pred - pose_gt).abs()  # B, S, N, 2
+        i_loss = torch.mean(i_loss)  # B, S, N
+
+        # if cfg.se3loss:
+        #     pred_cameras = pose_encoding_to_camera(pose_pred.clone(), cfg.MODEL.pose_encoding_type)
+        #     pred_se3 = pred_cameras.get_world_to_view_transform().get_matrix()    
+        #     rel_pred = closed_form_inverse(pred_se3[pair1]).bmm(pred_se3[pair2])
+        #     relR = (matrix_to_quaternion(rel_pred[:,:3,:3]) - matrix_to_quaternion(rel_gt[:,:3,:3])) ** 2
+        #     relT = (rel_pred[:,3:,:3] - rel_gt[:,3:,:3]).norm(dim=-1)
+        #     relLoss = relR.mean() + relT.mean() * 0.5
+        #     pose_loss += i_weight * relLoss
+        # else:
+        
+        pose_loss += i_weight * i_loss
+
+        # if gt_track is not None:
+        #     epiloss = compute_epipolar_distance(pose_pred, cfg, pair1, pair2, leftKP, rightKP)
+        #     epiloss = epiloss.mean()
+        #     pose_loss += i_weight * epiloss * cfg.epiloss_w
+
+
+    pose_loss = pose_loss / n_predictions
+    return pose_loss
+

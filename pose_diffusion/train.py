@@ -196,7 +196,8 @@ def _train_or_eval_fn(
             loss = predictions["loss"]
         else:
             with torch.no_grad():
-                predictions = model(images, training=False)
+                # predictions = model(images, training=False)
+                predictions = model(images, gt_cameras=gt_cameras, training=False)
 
         pred_cameras = predictions["pred_cameras"]
 

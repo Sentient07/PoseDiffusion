@@ -45,7 +45,7 @@ class Co3dDataset(Dataset):
         eval_time=False,
         normalize_cameras=False,
         first_camera_transform=True,
-        mask_images=False,
+        mask_images=True,
         CO3D_DIR=None,
         CO3D_ANNOTATION_DIR=None,
         foreground_crop=True,
@@ -250,6 +250,7 @@ class Co3dDataset(Dataset):
             image = Image.open(image_path).convert("RGB")
 
             if self.mask_images:
+                # print(f"Masking image")
                 white_image = Image.new("RGB", image.size, (255, 255, 255))
                 mask_name = osp.basename(filepath.replace(".jpg", ".png"))
 

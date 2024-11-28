@@ -14,10 +14,10 @@ train:
     lr: 0.0001
     resume_ckpt: False
     epochs: 100
-    ckpt_interval: 5
+    ckpt_interval: 1
     num_workers: 8
 
-    eval_interval: 5
+    eval_interval: 2
 
     print_interval: 10
 
