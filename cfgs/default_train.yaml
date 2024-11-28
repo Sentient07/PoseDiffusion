@@ -1,4 +1,10 @@
-seed: 0
+hydra:
+    run:
+        dir: .
+
+
+
+seed: 42
 exp_name: exp001_train
 exp_dir: "name_your_own"
 
@@ -8,6 +14,7 @@ train:
     CO3D_ANNOTATION_DIR: "/fsx-repligen/jianyuan/datasets/co3d_relpose/"
     
     mp: "bf16"
+    auto_resume: True
 
     img_size: 224
     category: seen

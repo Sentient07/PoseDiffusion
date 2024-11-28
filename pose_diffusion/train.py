@@ -10,7 +10,7 @@ from collections import OrderedDict
 from functools import partial
 from typing import Dict, List, Optional, Union
 from multiprocessing import Pool
-
+import glob
 import hydra
 import torch
 from hydra.utils import instantiate, get_original_cwd
@@ -29,6 +29,20 @@ from util.train_util import (
     view_color_coded_images_for_visdom,
 )
 from models.camera_predictor import CameraPredictor
+
+
+def find_last_checkpoint(exp_dir, all_checkpoints: bool = False):
+    fls = sorted(glob.glob(os.path.join(glob.escape(exp_dir), "ckpt_" + "[0-9]" * 6)))
+
+    if len(fls) == 0:
+        return None
+    elif all_checkpoints:
+        return fls
+    else:
+        return fls[-1]
+
+
+
 
 @hydra.main(config_path="../cfgs/", config_name="default_train")
 def train_fn(cfg: DictConfig):
@@ -89,16 +103,36 @@ def train_fn(cfg: DictConfig):
         except:
             model.load_state_dict(checkpoint, strict=True)
 
-        accelerator.print(f"Successfully resumed from {cfg.train.resume_ckpt}")
+        accelerator.print(f"Successfully resumed from {cfg.train.resume_ckpt}, start epoch is {start_epoch}")
+
+
+    if cfg.train.auto_resume:
+        last_checkpoint = find_last_checkpoint(cfg.exp_dir)
+        accelerator.print(f"Find last checkpoint: {last_checkpoint}")
+        
+        try:
+            resume_epoch = int(os.path.basename(last_checkpoint)[5:]) - 1
+        except:
+            resume_epoch = -1
+            
+        start_epoch = resume_epoch + 1
+        
+        if last_checkpoint is not None:
+            accelerator.print(f"Loading ckpt from {last_checkpoint}")
+            accelerator.load_state(last_checkpoint)
+        else:
+            accelerator.print(f"Starting from scratch")
 
     # metrics to record
     stats = VizStats(("loss", "lr", "sec/it", "Auc_30", "Racc_5", "Racc_15", "Racc_30", "Tacc_5", "Tacc_15", "Tacc_30"))
+    stats.epoch = start_epoch
+
     num_epochs = cfg.train.epochs
 
     for epoch in range(start_epoch, num_epochs):
         stats.new_epoch()
 
-        set_seed_and_print(cfg.seed + epoch)
+        set_seed_and_print(cfg.seed + epoch * 1000)
 
         # Evaluation
         if (epoch != 0) and (epoch % cfg.train.eval_interval == 0):
@@ -225,7 +259,7 @@ def _train_or_eval_fn(
         predictions["Auc_30"] = Auc_30
 
         current_lr = lr_scheduler.get_last_lr()[0]  # Fetch lr from lr_scheduler if available
-        predictions["lr"] = current_lr
+        predictions["lr"] = current_lr * 1000
 
         if visualize:
             # an example if trying to conduct visualization by visdom
