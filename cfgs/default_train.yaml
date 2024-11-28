@@ -7,6 +7,7 @@ train:
     CO3D_DIR: "/fsx-repligen/shared/datasets/co3d/"
     CO3D_ANNOTATION_DIR: "/fsx-repligen/jianyuan/datasets/co3d_relpose/"
     
+    mp: "bf16"
 
     img_size: 224
     category: seen
@@ -24,7 +25,7 @@ train:
     len_train: 16384
     len_eval: 256
 
-    max_images: 128
+    max_images: 160
     normalize_cameras: True
     persistent_workers: True
 
@@ -34,7 +35,7 @@ train:
     cudnnbenchmark: False
     first_camera_transform: True
     min_num_images: 30
-    images_per_seq: [3, 20]
+    images_per_seq: [8, 16]
     compute_optical: True
     color_aug: True
     erase_aug: False

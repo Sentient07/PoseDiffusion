@@ -33,7 +33,7 @@ from models.camera_predictor import CameraPredictor
 @hydra.main(config_path="../cfgs/", config_name="default_train")
 def train_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
-    accelerator = Accelerator(even_batches=False, device_placement=False)
+    accelerator = Accelerator(even_batches=False, device_placement=False, mixed_precision=cfg.train.mp)
 
     # Print configuration and accelerator state
     accelerator.print("Model Config:", OmegaConf.to_yaml(cfg), accelerator.state)
@@ -223,6 +223,9 @@ def _train_or_eval_fn(
         predictions["Tacc_15"] = Tacc_15
         predictions["Tacc_30"] = Tacc_30
         predictions["Auc_30"] = Auc_30
+
+        current_lr = lr_scheduler.get_last_lr()[0]  # Fetch lr from lr_scheduler if available
+        predictions["lr"] = current_lr
 
         if visualize:
             # an example if trying to conduct visualization by visdom

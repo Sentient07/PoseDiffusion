@@ -33,6 +33,58 @@ _RESNET_STD = [0.229, 0.224, 0.225]
 
 logger = logging.getLogger(__name__)
 
+
+
+class AttnBlock_FLASH(nn.Module):
+    def __init__(
+        self,
+        hidden_size,
+        num_heads,
+        attn_class: Callable[..., nn.Module] = nn.MultiheadAttention,
+        mlp_ratio=4.0,
+        **block_kwargs
+    ):
+        """
+        Self attention block
+        """
+        super().__init__()
+        self.norm1 = nn.LayerNorm(
+            hidden_size #, elementwise_affine=False, eps=1e-6
+        )
+        self.norm2 = nn.LayerNorm(
+            hidden_size #, elementwise_affine=False, eps=1e-6
+        )
+
+        self.attn = attn_class(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            batch_first=True,
+            **block_kwargs
+        )
+
+        mlp_hidden_dim = int(hidden_size * mlp_ratio)
+
+        self.mlp = Mlp(
+            in_features=hidden_size, hidden_features=mlp_hidden_dim, drop=0
+        )
+
+    def forward(self, x, mask=None):
+        # Prepare the mask for PyTorch's attention (it expects a different format)
+        # attn_mask = mask if mask is not None else None
+        # Normalize before attention
+        x = self.norm1(x)
+
+        # PyTorch's MultiheadAttention returns attn_output, attn_output_weights
+        # attn_output, _ = self.attn(x, x, x, attn_mask=attn_mask)
+
+        attn_output, _ = self.attn(x, x, x, need_weights=False)
+
+        # Add & Norm
+        x = x + attn_output
+        x = x + self.mlp(self.norm2(x))
+        return x
+
+
 class PoseEmbedding(nn.Module):
     def __init__(self, target_dim, n_harmonic_functions=10, append_input=True):
         super().__init__()
@@ -284,7 +336,7 @@ class CameraPredictor(nn.Module):
         mlp_ratio=4,
         z_dim: int = 768,
         down_size=336,
-        att_depth=8,
+        att_depth=6,
         trunk_depth=4,
         backbone="dinov2b",
         pose_encoding_type="absT_quaR_OneFL",
@@ -313,7 +365,7 @@ class CameraPredictor(nn.Module):
             in_features=z_dim, out_features=hidden_size, drop=0
         )
         self.norm = nn.LayerNorm(
-            hidden_size, elementwise_affine=False, eps=1e-6
+            hidden_size #, elementwise_affine=False, eps=1e-6
         )
 
         # sine and cosine embed for camera parameters
@@ -340,7 +392,7 @@ class CameraPredictor(nn.Module):
 
         self.self_att = nn.ModuleList(
             [
-                AttnBlock(
+                AttnBlock_FLASH(
                     hidden_size,
                     num_heads,
                     mlp_ratio=mlp_ratio,
@@ -350,9 +402,22 @@ class CameraPredictor(nn.Module):
             ]
         )
 
+        self.global_attention = nn.ModuleList(
+            [
+                AttnBlock_FLASH(
+                    hidden_size,
+                    num_heads,
+                    mlp_ratio=mlp_ratio,
+                    attn_class=nn.MultiheadAttention,
+                )
+                for _ in range(self.att_depth)
+            ]
+        )
+
+
         self.trunk = nn.Sequential(
             *[
-                AttnBlock(
+                AttnBlock_FLASH(
                     hidden_size,
                     num_heads,
                     mlp_ratio=mlp_ratio,
@@ -361,6 +426,8 @@ class CameraPredictor(nn.Module):
                 for _ in range(trunk_depth)
             ]
         )
+
+
 
         self.gamma = 0.8
 
@@ -417,6 +484,12 @@ class CameraPredictor(nn.Module):
             # Run trunk transformers on rgb_feat
             rgb_feat = self.trunk(rgb_feat)
 
+
+            # rgb_feat = self.global_attention(rgb_feat.view(batch_num, -1))
+            # import pdb; pdb.set_trace()
+            
+            
+            
             # Predict the delta feat and pose encoding at each iteration
             delta = self.pose_branch(rgb_feat)
             delta_pred_pose_enc = delta[..., : self.target_dim]
@@ -506,13 +579,21 @@ class CameraPredictor(nn.Module):
 
         B, S, P, C = rgb_feat.shape # P here is P+1
         # Make it (B*F, P, C)
-        rgb_feat = rearrange(rgb_feat, "b s p c -> (b s) p c", b=B, s=S)
 
         for idx in range(self.att_depth):
             # self attention
+            rgb_feat = rearrange(rgb_feat, "b s p c -> (b s) p c", b=B, s=S)
+            
             rgb_feat = self.self_att[idx](rgb_feat)
+            
+            rgb_feat = rearrange(rgb_feat, "(b s) p c -> b (s p) c", b=B, s=S)
 
-        rgb_feat = rearrange(rgb_feat, "(b s) p c -> b s p c", b=B, s=S)
+            rgb_feat = self.global_attention[idx](rgb_feat)
+            
+            rgb_feat = rearrange(rgb_feat, "b (s p) c -> b s p c", b=B, s=S)
+            
+            
+        # rgb_feat = rearrange(rgb_feat, "(b s) p c -> b s p c", b=B, s=S)
 
         rgb_feat = rgb_feat[:, :, 0] # B,S,C
 
