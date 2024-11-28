@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 from pytorch3d.transforms import quaternion_to_matrix, matrix_to_quaternion
 from pytorch3d.renderer import PerspectiveCameras
 
-from genai3d.models.pose_pred_modules import *
+# from genai3d.models.pose_pred_modules import *
+from pose_pred_modules import *
 
 from pytorch3d.renderer.implicit.harmonic_embedding import HarmonicEmbedding
 from pytorch3d.transforms.so3 import so3_relative_angle
