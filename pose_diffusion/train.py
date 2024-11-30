@@ -9,7 +9,7 @@ import time
 from collections import OrderedDict
 from functools import partial
 from typing import Dict, List, Optional, Union
-from multiprocessing import Pool
+# from multiprocessing import Pool
 import glob
 import hydra
 import torch
@@ -60,16 +60,18 @@ def train_fn(cfg: DictConfig):
     set_seed_and_print(cfg.seed)
 
     # Visualization setup
+    viz = None
     if accelerator.is_main_process:
-        try:
-            from visdom import Visdom
+        viz = None
+        # try:
+        #     from visdom import Visdom
 
-            viz = Visdom()
-            # cams_show = {"ours_pred": pred_cameras, "ours_pred_aligned": pred_cameras_aligned, "gt_cameras": gt_cameras}
-            # fig = plot_scene({f"{folder_path}": cams_show})
-            # viz.plotlyplot(fig, env="visual", win="cams")
-        except:
-            print("Warning: please check your visdom connection for visualization")
+        #     viz = Visdom()
+        #     # cams_show = {"ours_pred": pred_cameras, "ours_pred_aligned": pred_cameras_aligned, "gt_cameras": gt_cameras}
+        #     # fig = plot_scene({f"{folder_path}": cams_show})
+        #     # viz.plotlyplot(fig, env="visual", win="cams")
+        # except:
+        #     print("Warning: please check your visdom connection for visualization")
 
     # Data loading
     dataset, eval_dataset = get_co3d_dataset(cfg)
@@ -98,10 +100,20 @@ def train_fn(cfg: DictConfig):
     start_epoch = 0
     if cfg.train.resume_ckpt:
         checkpoint = torch.load(cfg.train.resume_ckpt)
+
+        if False:
+            new_checkpoint = {}
+            prefix = 'camera_predictor.'
+            for key, value in checkpoint.items():
+                if key.startswith(prefix):
+                    new_key = key[len(prefix):]  # Remove the prefix
+                    new_checkpoint[new_key] = value
+            torch.save(new_checkpoint, 'modified_checkpoint.ckpt')
+        
         try:
-            model.load_state_dict(prefix_with_module(checkpoint), strict=True)
+            model.load_state_dict(prefix_with_module(checkpoint), strict=cfg.train.resume_strict)
         except:
-            model.load_state_dict(checkpoint, strict=True)
+            model.load_state_dict(checkpoint, strict=cfg.train.resume_strict)
 
         accelerator.print(f"Successfully resumed from {cfg.train.resume_ckpt}, start epoch is {start_epoch}")
 

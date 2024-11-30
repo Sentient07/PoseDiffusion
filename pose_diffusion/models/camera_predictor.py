@@ -250,7 +250,7 @@ def camera_to_pose_encoding(
 
 def pose_encoding_to_camera(
     pose_encoding,
-    pose_encoding_type="absT_quaR_logFL",
+    pose_encoding_type="absT_quaR_OneFL",
     log_focal_length_bias=1.8,
     min_focal_length=0.1,
     max_focal_length=30,
@@ -335,8 +335,8 @@ class CameraPredictor(nn.Module):
         num_heads=8,
         mlp_ratio=4,
         z_dim: int = 768,
-        down_size=336,
-        att_depth=6,
+        down_size=224,
+        att_depth=8,
         trunk_depth=4,
         backbone="dinov2b",
         pose_encoding_type="absT_quaR_OneFL",
@@ -402,13 +402,22 @@ class CameraPredictor(nn.Module):
             ]
         )
 
-        self.global_attention = nn.ModuleList(
+        # self.global_attention = nn.ModuleList(
+        #     [
+        #         AttnBlock_FLASH(
+        #             hidden_size,
+        #             num_heads,
+        #             mlp_ratio=mlp_ratio,
+        #             attn_class=nn.MultiheadAttention,
+        #         )
+        #         for _ in range(self.att_depth)
+        #     ]
+        # )
+        
+        self.cross_att = nn.ModuleList(
             [
-                AttnBlock_FLASH(
-                    hidden_size,
-                    num_heads,
-                    mlp_ratio=mlp_ratio,
-                    attn_class=nn.MultiheadAttention,
+                CrossAttnBlock(
+                    hidden_size, hidden_size, num_heads, mlp_ratio=mlp_ratio
                 )
                 for _ in range(self.att_depth)
             ]
@@ -577,27 +586,56 @@ class CameraPredictor(nn.Module):
         pose_token = self.pose_token.expand(B, S, -1, -1)
         rgb_feat = torch.cat([pose_token, rgb_feat], dim=-2)
 
-        B, S, P, C = rgb_feat.shape # P here is P+1
-        # Make it (B*F, P, C)
+        
+        B, S, P, C = rgb_feat.shape
 
         for idx in range(self.att_depth):
             # self attention
             rgb_feat = rearrange(rgb_feat, "b s p c -> (b s) p c", b=B, s=S)
-            
             rgb_feat = self.self_att[idx](rgb_feat)
-            
-            rgb_feat = rearrange(rgb_feat, "(b s) p c -> b (s p) c", b=B, s=S)
+            rgb_feat = rearrange(rgb_feat, "(b s) p c -> b s p c", b=B, s=S)
 
-            rgb_feat = self.global_attention[idx](rgb_feat)
-            
-            rgb_feat = rearrange(rgb_feat, "b (s p) c -> b s p c", b=B, s=S)
-            
-            
-        # rgb_feat = rearrange(rgb_feat, "(b s) p c -> b s p c", b=B, s=S)
+            feat_0 = rgb_feat[:, 0]
+            feat_others = rgb_feat[:, 1:]
 
-        rgb_feat = rgb_feat[:, :, 0] # B,S,C
+            # cross attention
+            feat_others = rearrange(
+                feat_others, "b m p c -> b (m p) c", m=S - 1, p=P
+            )
+            feat_others = self.cross_att[idx](feat_others, feat_0)
+
+            feat_others = rearrange(
+                feat_others, "b (m p) c -> b m p c", m=S - 1, p=P
+            )
+            rgb_feat = torch.cat([rgb_feat[:, 0:1], feat_others], dim=1)
+
+        rgb_feat = rgb_feat[:, :, 0]
 
         return rgb_feat, B, S, C
+        
+        # rgb_feat = torch.cat([pose_token, rgb_feat], dim=-2)
+
+        # B, S, P, C = rgb_feat.shape # P here is P+1
+        # # Make it (B*F, P, C)
+
+        # for idx in range(self.att_depth):
+        #     # self attention
+        #     rgb_feat = rearrange(rgb_feat, "b s p c -> (b s) p c", b=B, s=S)
+            
+        #     rgb_feat = self.self_att[idx](rgb_feat)
+            
+        #     rgb_feat = rearrange(rgb_feat, "(b s) p c -> b (s p) c", b=B, s=S)
+
+        #     rgb_feat = self.global_attention[idx](rgb_feat)
+            
+        #     rgb_feat = rearrange(rgb_feat, "b (s p) c -> b s p c", b=B, s=S)
+            
+            
+        # # rgb_feat = rearrange(rgb_feat, "(b s) p c -> b s p c", b=B, s=S)
+
+        # rgb_feat = rgb_feat[:, :, 0] # B,S,C
+
+        # return rgb_feat, B, S, C
     
 
 def closed_form_inverse(se3):

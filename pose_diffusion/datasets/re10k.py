@@ -25,7 +25,7 @@ from util.normalize_cameras import normalize_cameras
 import h5py
 from io import BytesIO
 
-from multiprocessing import Pool
+# from multiprocessing import Pool
 import tqdm
 from util.camera_transform import adjust_camera_to_bbox_crop_, adjust_camera_to_image_scale_, bbox_xyxy_to_xywh
 

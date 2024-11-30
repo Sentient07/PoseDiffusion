@@ -4,14 +4,14 @@ hydra:
 
 
 
-seed: 42
+seed: 8080
 exp_name: exp001_train
 exp_dir: "name_your_own"
 
 train:
     # Please Specify Your Own Path
-    CO3D_DIR: "/fsx-repligen/shared/datasets/co3d/"
-    CO3D_ANNOTATION_DIR: "/fsx-repligen/jianyuan/datasets/co3d_relpose/"
+    CO3D_DIR: "co3d/"
+    CO3D_ANNOTATION_DIR: "co3d_relpose/"
     
     mp: "bf16"
     auto_resume: True
@@ -21,9 +21,11 @@ train:
     restart_num: 50
     lr: 0.0001
     resume_ckpt: False
+    resume_strict: False
     epochs: 100
     ckpt_interval: 1
     num_workers: 8
+
 
     eval_interval: 2
 
